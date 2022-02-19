@@ -18,7 +18,7 @@ ALPACA_SECRET_KEY=TEST
 Run the `main.py` file after completing the setup steps above.
 
 ```
-usage: main.py [-h] [--live] [-from FROM] [-to TO] [-tz TIMEZONE] [-t TICKERS [TICKERS ...]] {RSIStack}
+usage: main.py [-h] [--live] [-from FROMDATE] [-to TODATE] [-tz TIMEZONE] [-sc STARTCASH] [-t TICKERS [TICKERS ...]] {RSIStack}
 
 Backtest and Live Trading using Algorithms.
 
@@ -28,11 +28,14 @@ positional arguments:
 optional arguments:
   -h, --help            show this help message and exit
   --live                run live trading
-  -from FROM, --fromDate FROM
+  -from FROMDATE, --fromDate FROMDATE
                         date to start backtesting from formatted YYYY-MM-DD
-  -to TO, --toDate TO    date to end backtesting from formatted YYYY-MM-DD
+  -to TODATE, --toDate TODATE
+                        date to end backtesting from formatted YYYY-MM-DD
   -tz TIMEZONE, --timezone TIMEZONE
                         timezone to use default is UTC
+  -sc STARTCASH, --startcash STARTCASH
+                        the amount of cash to start with default is $100,000
   -t TICKERS [TICKERS ...], --tickers TICKERS [TICKERS ...]
                         tickers to use
 ```

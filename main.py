@@ -43,6 +43,13 @@ parser.add_argument(
     help='timezone to use default is UTC',
     default='US/Eastern'
 )
+parser.add_argument(
+    '-sc',
+    '--startcash',
+    help='the amount of cash to start with default is $100,000',
+    type=int,
+    default=100_000
+)
 parser.add_argument('-t', '--tickers', nargs='+', help='tickers to use')
 
 args = parser.parse_args()
@@ -59,7 +66,7 @@ timezone = pytz.timezone(args.timezone)
 PAPER_TRADING = not args.live
 
 cerebro = bt.Cerebro()
-cerebro.broker.setcash(100000)
+cerebro.broker.setcash(args.startcash)
 cerebro.broker.setcommission(commission=0.0)
 
 store = alpaca.AlpacaStore(
@@ -98,6 +105,23 @@ for ticker in tickers:
 
         cerebro.adddata(d)
 
-cerebro.run()
+runs = cerebro.run()
 print("Final Portfolio Value: %.2f" % cerebro.broker.getvalue())
 # TODO mpyplot does not get set on call: cerebro.plot(style='candlestick', barup='green', bardown='red')
+
+# Generate results
+results = []
+for run in runs:
+    for strategy in run:
+        value = round(strategy.broker.get_value(), 2)
+        PnL = round(value - args.startcash, 2)
+        period = strategy.params.period
+        results.append([period, PnL])
+
+print('Results by Period:')
+for period, PnL in sorted(results, key=lambda x: x[0]):
+    print(f'{period} period: {PnL}')
+
+print('Results by PnL:')
+for period, PnL in sorted(results, key=lambda x: x[1], reverse=True):
+    print(f'{period} period: {PnL}')
