@@ -1,15 +1,103 @@
-import os
 
-import alpaca_trade_api as tradeapi
-from dotenv import load_dotenv
+import argparse
+from typing import Dict
 
-load_dotenv()
+import alpaca_backtrader_api as alpaca
+import backtrader as bt
+import pandas as pd
+import pytz
 
-ALPACA_API_KEY = os.getenv('ALPACA_API_KEY')
-ALPACA_SECRET_KEY = os.getenv('ALPACA_SECRET_KEY')
-PAPER = os.getenv('PAPER') != 'False'
+from settings import *
+from strategies.customStrategy import BaseStrategy
+from strategies.RSIStack import RSIStack
 
-api = tradeapi.REST(
-    key_id=ALPACA_API_KEY,
-    secret_key=ALPACA_SECRET_KEY,
+strategies: Dict[str, BaseStrategy] = {
+    'RSIStack': RSIStack,
+}
+
+parser = argparse.ArgumentParser(
+    description='Backtest and Live Trading using Algorithms.'
 )
+
+parser.add_argument(
+    'strategy',
+    help='the Strategy to be used',
+    choices=strategies.keys()
+)
+parser.add_argument('--live', action='store_true', help='run live trading')
+
+parser.add_argument(
+    '-from',
+    '--fromDate',
+    help='date to start backtesting from formatted YYYY-MM-DD',
+    default='2020-01-01',
+)
+parser.add_argument(
+    '-to',
+    '--toDate',
+    help='date to end backtesting from formatted YYYY-MM-DD',
+)
+parser.add_argument(
+    '-tz',
+    '--timezone',
+    help='timezone to use default is UTC',
+    default='US/Eastern'
+)
+parser.add_argument('-t', '--tickers', nargs='+', help='tickers to use')
+
+args = parser.parse_args()
+
+
+strategy = strategies[args.strategy]
+
+tickers = args.tickers if args.tickers else ['SPY']
+
+fromdate = pd.Timestamp(args.fromDate)
+todate = pd.Timestamp(args.toDate)
+timezone = pytz.timezone(args.timezone)
+
+PAPER_TRADING = not args.live
+
+cerebro = bt.Cerebro()
+cerebro.broker.setcash(100000)
+cerebro.broker.setcommission(commission=0.0)
+
+store = alpaca.AlpacaStore(
+    key_id=ALPACA_KEY_ID,
+    secret_key=ALPACA_SECRET_KEY,
+    paper=PAPER_TRADING
+)
+
+if PAPER_TRADING:
+    strategy.addStrategyToCerebro(cerebro)
+    # TODO errors out: strategy.addOptimizerToCerebro(cerebro)
+else:
+    strategy.addStrategyToCerebro(cerebro)
+
+if not PAPER_TRADING:
+    print(f"LIVE TRADING")
+    broker = store.getbroker()
+    cerebro.setbroker(broker)
+
+DataFactory = store.getdata
+
+for ticker in tickers:
+    for timeframe, minutes in strategy.timeframes.items():
+        print(
+            f'Adding ticker {ticker} using {timeframe} timeframe at {minutes} minutes.'
+        )
+
+        d = DataFactory(
+            dataname=ticker,
+            timeframe=bt.TimeFrame.Minutes,
+            compression=minutes,
+            fromdate=fromdate,
+            todate=todate,
+            historical=True
+        )
+
+        cerebro.adddata(d)
+
+cerebro.run()
+print("Final Portfolio Value: %.2f" % cerebro.broker.getvalue())
+# TODO mpyplot does not get set on call: cerebro.plot(style='candlestick', barup='green', bardown='red')
