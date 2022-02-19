@@ -1,5 +1,6 @@
 
 import argparse
+from datetime import datetime
 from typing import Dict
 
 import alpaca_backtrader_api as alpaca
@@ -66,8 +67,16 @@ timezone = pytz.timezone(args.timezone)
 PAPER_TRADING = not args.live
 
 cerebro = bt.Cerebro()
+
 cerebro.broker.setcash(args.startcash)
 cerebro.broker.setcommission(commission=0.0)
+
+# TODO check this for live trading
+cerebro.addsizer(bt.sizers.PercentSizer, percents=95)
+
+cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
+cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
 
 store = alpaca.AlpacaStore(
     key_id=ALPACA_KEY_ID,
@@ -107,21 +116,37 @@ for ticker in tickers:
 
 runs = cerebro.run()
 print("Final Portfolio Value: %.2f" % cerebro.broker.getvalue())
-# TODO mpyplot does not get set on call: cerebro.plot(style='candlestick', barup='green', bardown='red')
 
-# Generate results
-results = []
-for run in runs:
-    for strategy in run:
-        value = round(strategy.broker.get_value(), 2)
-        PnL = round(value - args.startcash, 2)
-        period = strategy.params.period
-        results.append([period, PnL])
+data = [[
+    str(run.params.items()),
+    run.analyzers.sharpe.get_analysis()['sharperatio'],
+    run.analyzers.drawdown.get_analysis()['max'],
+    run.analyzers.returns.get_analysis()['rnorm']
+] for run in runs]
 
-print('Results by Period:')
-for period, PnL in sorted(results, key=lambda x: x[0]):
-    print(f'{period} period: {PnL}')
+dataframe = pd.DataFrame(
+    data,
+    columns=['params', 'sharpe', 'max_drawdown', 'rnorm']
+)
+print(dataframe)
+dataframe.to_csv(f'{args.strategy}_{datetime.now()}_results.csv')
 
-print('Results by PnL:')
-for period, PnL in sorted(results, key=lambda x: x[1], reverse=True):
-    print(f'{period} period: {PnL}')
+if not PAPER_TRADING:
+    cerebro.plot(style='candlestick', barup='green', bardown='red')
+else:
+    # Generate results
+    results = []
+    for run in runs:
+        for strategy in run:
+            value = round(strategy.broker.get_value(), 2)
+            PnL = round(value - args.startcash, 2)
+            period = strategy.params.period
+            results.append([period, PnL])
+
+    print('Results by Period:')
+    for period, PnL in sorted(results, key=lambda x: x[0]):
+        print(f'{period} period: {PnL}')
+
+    print('Results by PnL:')
+    for period, PnL in sorted(results, key=lambda x: x[1], reverse=True):
+        print(f'{period} period: {PnL}')
