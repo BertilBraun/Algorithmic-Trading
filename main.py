@@ -11,9 +11,11 @@ import pytz
 from settings import *
 from strategies.customStrategy import BaseStrategy
 from strategies.RSIStack import RSIStack
+from strategies.SuperScalper import SuperScalper
 
 strategies: Dict[str, BaseStrategy] = {
     'RSIStack': RSIStack,
+    'SuperScalper': SuperScalper
 }
 
 parser = argparse.ArgumentParser(
