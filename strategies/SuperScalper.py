@@ -1,14 +1,25 @@
 
-from datetime import time
+from dataclasses import dataclass
+from datetime import datetime, time
+from typing import List
 
 import backtrader as bt
 
 from strategies.customStrategy import BaseStrategy
 
 
+@dataclass
+class Entry:
+    type: int = 0
+    entry: float = 0
+    time: datetime = None
+
+
 class SuperScalper(BaseStrategy):
     params = dict(
-
+        amt_open_trades=100,
+        ema_length=5,
+        profit_target=1_000,
     )
 
     timeframes = {
@@ -16,83 +27,84 @@ class SuperScalper(BaseStrategy):
     }
 
     def __init__(self):
-        self.orderRefs = None
-        self.inds = {}
-        for d in self.datas:
-            self.inds[d] = {}
-            self.inds[d]['rsi'] = bt.ind.RSI(d)
-            self.inds[d]['rsiob'] = self.inds[d]['rsi'] >= self.p.rsi_overbought
-            self.inds[d]['rsios'] = self.inds[d]['rsi'] <= self.p.rsi_oversold
-        for i in range(len(self.timeframes)-1, len(self.datas), len(self.timeframes)):
-            self.inds[self.datas[i]]['atr'] = bt.ind.ATR(self.datas[i])
+        self.entries: List[Entry] = []
+        self.ema = bt.indicators.EMA(period=self.p.ema_length)
 
     def start(self):
-        # Timeframes must be entered from highest to lowest frequency.
-        # Getting the length of the lowest frequency timeframe will
-        # show us how many periods have passed
-        self.lenlowtframe = len(self.datas[-1])
-        self.stacks = {}
+        """This function is called when the strategy is starting to process each time frame."""
+        pass
 
     def next(self):
         # TODO notice
-        if self.data.num2date(self.data.datetime[0]) >= time(15, 45, 0):
-            self.log('Market Closed')
+        # if self.data.num2date(self.data.datetime[0]) >= time(15, 45, 0):
+        #     self.log('Market Closed')
 
-        # Reset all of the stacks if a bar has passed on our
-        # lowest frequency timeframe
-        if not self.lenlowtframe == len(self.datas[-1]):
-            self.lenlowtframe += 1
-            self.stacks = {}
+        if not hasattr(self, 'init'):
+            print('Initializing')
+            self.init = True
+            print(self.datas[0].__dict__)
 
-        for i, d in enumerate(self.datas):
-            # Create a dictionary for each new symbol.
-            ticker = d.p.dataname
-            if i % len(self.timeframes) == 0:
-                self.stacks[ticker] = {}
-                self.stacks[ticker]['rsiob'] = 0
-                self.stacks[ticker]['rsios'] = 0
-            if i % len(self.timeframes) == len(self.timeframes) - 1:
-                self.stacks[ticker]['data'] = d
-            self.stacks[ticker]['rsiob'] += self.inds[d]['rsiob'][0]
-            self.stacks[ticker]['rsios'] += self.inds[d]['rsios'][0]
+        if len(self.entries) < self.p.amt_open_trades:
+            if self.ema[0] >= self.ema[-1]:
+                self.buy(len(self.entries), exectype=bt.Order.Market)
+                self.entries.append(Entry(
+                    type=1,
+                    entry=self.data.close[0],
+                    time=self.data.datetime[0]
+                ))
+            else:
+                self.sell(len(self.entries), exectype=bt.Order.Market)
+                self.entries.append(Entry(
+                    type=-1,
+                    entry=self.data.close[0],
+                    time=self.data.datetime[0]
+                ))
+        else:
+            best_idx = 0
+            best_value = self.entries[0].entry - self.data.close[0]
 
-        for k, v in list(self.stacks.items()):
-            if v['rsiob'] < len(self.timeframes) and v['rsios'] < len(self.timeframes):
-                del self.stacks[k]
+            for i, entry in enumerate(self.entries):
+                if entry.type == 1 and entry.entry - self.data.close[0] > best_value:
+                    best_idx = i
+                    best_value = entry.entry - self.data.close[0]
+                elif entry.type == -1 and self.data.close[0] - entry.entry > best_value:
+                    best_idx = i
+                    best_value = self.data.close[0] - entry.entry
 
-        # Check if there are any stacks from the previous period
-        # And buy/sell stocks if there are no existing positions or open orders
-        positions = [d for d, pos in self.getpositions().items() if pos]
-        if self.stacks and not positions and not self.orderRefs:
-            for k, v in self.stacks.items():
-                d = v['data']
-                size = self.broker.get_cash() // d
-                if v['rsiob'] == len(self.timeframes) and \
-                        d.close[0] < d.close[-1]:
-                    print(f"{d.p.dataname} overbought")
-                    risk = d + self.inds[d]['atr'][0]
-                    reward = d - self.inds[d]['atr'][0] * self.p.rrr
-                    os = self.sell_bracket(data=d,
-                                           price=d.close[0],
-                                           size=size,
-                                           stopprice=risk,
-                                           limitprice=reward)
-                    self.orderRefs = [o.ref for o in os]
-                elif v['rsios'] == len(self.timeframes) and d.close[0] > d.close[-1]:
-                    print(f"{d.p.dataname} oversold")
-                    risk = d - self.inds[d]['atr'][0]
-                    reward = d + self.inds[d]['atr'][0] * self.p.rrr
-                    os = self.buy_bracket(data=d,
-                                          price=d.close[0],
-                                          size=size,
-                                          stopprice=risk,
-                                          limitprice=reward)
-                    self.orderRefs = [o.ref for o in os]
+            self.close(best_idx)
+
+            if self.ema[0] >= self.ema[-1]:
+                self.buy(best_idx, exectype=bt.Order.Market)
+                self.entries[best_idx] = Entry(
+                    type=1,
+                    entry=self.data.close[0],
+                    time=self.data.datetime[0]
+                )
+            else:
+                self.sell(best_idx, exectype=bt.Order.Market)
+                self.entries[best_idx] = Entry(
+                    type=-1,
+                    entry=self.data.close[0],
+                    time=self.data.datetime[0]
+                )
+
+        total_profit = 0
+        for entry in self.entries:
+            if entry.type == 1:
+                total_profit += entry.entry - self.data.close[entry.index]
+            else:
+                total_profit += self.data.close[entry.index] - entry.entry
+
+        # total Profit > goal | end of day -> Close all trades
+        if total_profit > self.p.profit_target or \
+                self.data.num2date(self.data.datetime[0]) >= time(15, 45, 0):
+            for i in range(len(self.entries)):
+                self.close(i)
+
+        # TODO plot lines for each entry
 
     def stop(self):
-        """
-        This function is called when the strategy is finished with all the data.
-        """
+        """This function is called when the strategy is finished with all the data."""
         pass
 
     def log(self, txt, dt=None):
@@ -110,6 +122,3 @@ class SuperScalper(BaseStrategy):
         self.log(
             f'Order - {order.getordername()} {order.ordtypename()} {order.getstatusname()} for {order.size} shares @ ${order.price:.2f}'
         )
-
-        if not order.alive() and order.ref in self.orderRefs:
-            self.orderRefs.remove(order.ref)

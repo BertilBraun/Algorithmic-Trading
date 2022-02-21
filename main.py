@@ -8,7 +8,7 @@ import backtrader as bt
 import pandas as pd
 import pytz
 
-from settings import *
+from settings import ALPACA_KEY_ID, ALPACA_SECRET_KEY
 from strategies.customStrategy import BaseStrategy
 from strategies.RSIStack import RSIStack
 from strategies.SuperScalper import SuperScalper
@@ -39,6 +39,7 @@ parser.add_argument(
     '-to',
     '--toDate',
     help='date to end backtesting from formatted YYYY-MM-DD',
+    default=datetime.now().strftime('%Y-%m-%d'),
 )
 parser.add_argument(
     '-tz',
@@ -62,8 +63,8 @@ strategy = strategies[args.strategy]
 
 tickers = args.tickers if args.tickers else ['SPY']
 
-fromdate = pd.Timestamp(args.fromDate)
-todate = pd.Timestamp(args.toDate)
+fromdate = datetime.strptime(args.fromDate, '%Y-%m-%d')
+todate = datetime.strptime(args.toDate, '%Y-%m-%d')
 timezone = pytz.timezone(args.timezone)
 
 PAPER_TRADING = not args.live
