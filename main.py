@@ -1,4 +1,3 @@
-
 import argparse
 from datetime import datetime
 from typing import Dict
@@ -6,7 +5,6 @@ from typing import Dict
 import alpaca_backtrader_api as alpaca
 import backtrader as bt
 import pandas as pd
-import pytz
 
 from settings import ALPACA_KEY_ID, ALPACA_SECRET_KEY
 from strategies.customStrategy import BaseStrategy
@@ -28,6 +26,11 @@ parser.add_argument(
     choices=strategies.keys()
 )
 parser.add_argument('--live', action='store_true', help='run live trading')
+parser.add_argument(
+    '--optimize',
+    action='store_true',
+    help='optimize the strategy parameters for the given timeframe and ticker'
+)
 
 parser.add_argument(
     '-from',
@@ -40,12 +43,6 @@ parser.add_argument(
     '--toDate',
     help='date to end backtesting from formatted YYYY-MM-DD',
     default=datetime.now().strftime('%Y-%m-%d'),
-)
-parser.add_argument(
-    '-tz',
-    '--timezone',
-    help='timezone to use default is UTC',
-    default='US/Eastern'
 )
 parser.add_argument(
     '-sc',
@@ -61,15 +58,14 @@ args = parser.parse_args()
 
 strategy = strategies[args.strategy]
 
-tickers = args.tickers if args.tickers else ['SPY']
+tickers = args.tickers if args.tickers else ['AAPL']
 
 fromdate = datetime.strptime(args.fromDate, '%Y-%m-%d')
 todate = datetime.strptime(args.toDate, '%Y-%m-%d')
-timezone = pytz.timezone(args.timezone)
 
 PAPER_TRADING = not args.live
 
-cerebro = bt.Cerebro()
+cerebro = bt.Cerebro(maxcpus=1)
 
 cerebro.broker.setcash(args.startcash)
 cerebro.broker.setcommission(commission=0.0)
@@ -87,16 +83,15 @@ store = alpaca.AlpacaStore(
     paper=PAPER_TRADING
 )
 
-if PAPER_TRADING:
-    strategy.addStrategyToCerebro(cerebro)
-    # TODO errors out: strategy.addOptimizerToCerebro(cerebro)
-else:
-    strategy.addStrategyToCerebro(cerebro)
-
 if not PAPER_TRADING:
     print(f"LIVE TRADING")
     broker = store.getbroker()
     cerebro.setbroker(broker)
+
+if PAPER_TRADING and args.optimize:
+    strategy.addOptimizerToCerebro(cerebro)
+else:
+    strategy.addStrategyToCerebro(cerebro)
 
 DataFactory = store.getdata
 
@@ -117,39 +112,38 @@ for ticker in tickers:
 
         cerebro.adddata(d)
 
-runs = cerebro.run()
+# if some weird Index error gets printed, check the ticker names again
+runs = cerebro.run(optreturn=not args.optimize)
 print("Final Portfolio Value: %.2f" % cerebro.broker.getvalue())
 
+if args.optimize:
+    runs = [run[0] for run in runs]
+
 data = [[
-    str(run.params.items()),
-    run.analyzers.sharpe.get_analysis()['sharperatio'],
-    run.analyzers.drawdown.get_analysis()['max'],
-    run.analyzers.returns.get_analysis()['rnorm']
+    str(';'.join([f'{k}: {v}' for k, v in run.params.__dict__.items()])),
+    str(run.analyzers.sharpe.get_analysis()['sharperatio']),
+    str(run.analyzers.drawdown.get_analysis()['max']),
+    str(run.analyzers.returns.get_analysis()['rnorm'])
 ] for run in runs]
 
 dataframe = pd.DataFrame(
     data,
     columns=['params', 'sharpe', 'max_drawdown', 'rnorm']
 )
+filename = f'{args.strategy}_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}_results.csv'
+dataframe.to_csv(filename)
+print(f'Results saved to {filename}')
 print(dataframe)
-dataframe.to_csv(f'{args.strategy}_{datetime.now()}_results.csv')
 
-if not PAPER_TRADING:
+if not PAPER_TRADING or not args.optimize:
     cerebro.plot(style='candlestick', barup='green', bardown='red')
 else:
     # Generate results
     results = []
     for run in runs:
-        for strategy in run:
-            value = round(strategy.broker.get_value(), 2)
-            PnL = round(value - args.startcash, 2)
-            period = strategy.params.period
-            results.append([period, PnL])
-
-    print('Results by Period:')
-    for period, PnL in sorted(results, key=lambda x: x[0]):
-        print(f'{period} period: {PnL}')
+        PnL = round(run.broker.get_value() - args.startcash, 2)
+        results.append((run.params.__dict__, PnL))
 
     print('Results by PnL:')
-    for period, PnL in sorted(results, key=lambda x: x[1], reverse=True):
-        print(f'{period} period: {PnL}')
+    for params, PnL in sorted(results, key=lambda x: x[1], reverse=True):
+        print(f'{params} for Profit: {PnL}')

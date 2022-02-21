@@ -2,3 +2,5 @@
 **pycache**/
 Pipfile
 Pipfile.lock
+.vscode/
+*.csv

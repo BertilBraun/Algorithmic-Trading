@@ -26,6 +26,28 @@ class SuperScalper(BaseStrategy):
         '1Min': 1,
     }
 
+    @classmethod
+    def addStrategyToCerebro(cls, cerebro: bt.Cerebro):
+        cerebro.sizers.clear()
+        cerebro.addstrategy(SuperScalper)
+
+    @classmethod
+    def addOptimizerToCerebro(cls, cerebro: bt.Cerebro):
+        cerebro.sizers.clear()
+        cerebro.optstrategy(
+            SuperScalper,
+            ema_length=[3, 4],
+            amt_open_trades=[100, 120],
+            profit_target=[10_000, 25_000]
+        )
+        return
+        cerebro.optstrategy(
+            SuperScalper,
+            ema_length=range(2, 8, 2),
+            amt_open_trades=range(50, 200, 20),
+            profit_target=range(1_000, 100_000, 10_000)
+        )
+
     def __init__(self):
         self.entries: List[Entry] = []
         self.ema = bt.indicators.EMA(period=self.p.ema_length)
@@ -35,25 +57,29 @@ class SuperScalper(BaseStrategy):
         pass
 
     def next(self):
-        # TODO notice
-        # if self.data.num2date(self.data.datetime[0]) >= time(15, 45, 0):
-        #     self.log('Market Closed')
-
-        if not hasattr(self, 'init'):
-            print('Initializing')
-            self.init = True
-            print(self.datas[0].__dict__)
+        """This function is called by cerebro each time it has a new data."""
+        if not hasattr(self, 'entry_size'):
+            self.entry_size = self.broker.cash / \
+                self.data.close[0] / self.p.amt_open_trades
 
         if len(self.entries) < self.p.amt_open_trades:
             if self.ema[0] >= self.ema[-1]:
-                self.buy(len(self.entries), exectype=bt.Order.Market)
+                self.buy(
+                    tradeid=len(self.entries),
+                    size=self.entry_size,
+                    exectype=bt.Order.Market
+                )
                 self.entries.append(Entry(
                     type=1,
                     entry=self.data.close[0],
                     time=self.data.datetime[0]
                 ))
             else:
-                self.sell(len(self.entries), exectype=bt.Order.Market)
+                self.sell(
+                    tradeid=len(self.entries),
+                    size=self.entry_size,
+                    exectype=bt.Order.Market
+                )
                 self.entries.append(Entry(
                     type=-1,
                     entry=self.data.close[0],
@@ -71,17 +97,25 @@ class SuperScalper(BaseStrategy):
                     best_idx = i
                     best_value = self.data.close[0] - entry.entry
 
-            self.close(best_idx)
+            self.close(tradeid=best_idx)
 
             if self.ema[0] >= self.ema[-1]:
-                self.buy(best_idx, exectype=bt.Order.Market)
+                self.buy(
+                    tradeid=best_idx,
+                    size=self.entry_size,
+                    exectype=bt.Order.Market
+                )
                 self.entries[best_idx] = Entry(
                     type=1,
                     entry=self.data.close[0],
                     time=self.data.datetime[0]
                 )
             else:
-                self.sell(best_idx, exectype=bt.Order.Market)
+                self.sell(
+                    tradeid=best_idx,
+                    size=self.entry_size,
+                    exectype=bt.Order.Market
+                )
                 self.entries[best_idx] = Entry(
                     type=-1,
                     entry=self.data.close[0],
@@ -91,15 +125,21 @@ class SuperScalper(BaseStrategy):
         total_profit = 0
         for entry in self.entries:
             if entry.type == 1:
-                total_profit += entry.entry - self.data.close[entry.index]
+                total_profit += entry.entry - self.data.close[0]
             else:
-                total_profit += self.data.close[entry.index] - entry.entry
+                total_profit += self.data.close[0] - entry.entry
 
-        # total Profit > goal | end of day -> Close all trades
-        if total_profit > self.p.profit_target or \
-                self.data.num2date(self.data.datetime[0]) >= time(15, 45, 0):
+        # total Profit > goal -> Close all trades
+        if total_profit > self.p.profit_target:
+            self.log("Reached profit target, closing all trades")
             for i in range(len(self.entries)):
-                self.close(i)
+                self.close(tradeid=i)
+
+        # end of day -> Close all trades
+        if self.data.num2date(self.data.datetime[0]).time() >= time(15, 45, 0):
+            self.log("End of day, closing all trades")
+            for i in range(len(self.entries)):
+                self.close(tradeid=i)
 
         # TODO plot lines for each entry
 
@@ -120,5 +160,5 @@ class SuperScalper(BaseStrategy):
 
     def notify_order(self, order):
         self.log(
-            f'Order - {order.getordername()} {order.ordtypename()} {order.getstatusname()} for {order.size} shares @ ${order.price:.2f}'
+            f'Order - {order.getordername()} {order.ordtypename()} {order.getstatusname()} for {order.size} shares @ ${order.price}'
         )
