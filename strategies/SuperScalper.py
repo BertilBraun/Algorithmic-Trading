@@ -10,12 +10,14 @@ from matplotlib import pyplot as plt
 
 from strategies.customStrategy import BaseStrategy
 
+ENTRY_INDEX = 0
+
 
 @dataclass
 class Entry:
     type: int = 0
     entry: float = 0
-    time: datetime = None
+    index: int = 0
     order: bt.Order = None
 
 
@@ -24,15 +26,19 @@ class Trade:
     type: int = 0
     entry: float = 0
     exit: float = 0
-    timeEntry: datetime = None
-    timeExit: datetime = None
+    entryIndex: int = None
+    exitIndex: int = None
+    dayClose: bool = False
+    reachedProfit: bool = False
 
-    def __init__(self, type, entry, exit, timeEntry, timeExit):
+    def __init__(self, type, entry, exit, entryIndex, exitIndex, dayClose=False, reachedProfit=False):
         self.type = type
         self.entry = round(entry, 2)
         self.exit = round(exit, 2)
-        self.timeEntry = timeEntry
-        self.timeExit = timeExit
+        self.entryIndex = entryIndex
+        self.exitIndex = exitIndex
+        self.dayClose = dayClose
+        self.reachedProfit = reachedProfit
 
 
 class SuperScalper(BaseStrategy):
@@ -40,6 +46,8 @@ class SuperScalper(BaseStrategy):
         amt_open_trades=100,
         ema_length=5,
         profit_target=1_000,
+        size_security=1.3,
+        optimizing=False
     )
 
     timeframes = {
@@ -54,31 +62,123 @@ class SuperScalper(BaseStrategy):
     @classmethod
     def addOptimizerToCerebro(cls, cerebro: bt.Cerebro):
         cerebro.sizers.clear()
-        cerebro.optstrategy(
-            SuperScalper,
-            ema_length=[3, 4],
-            amt_open_trades=[100, 120],
-            profit_target=[10_000, 25_000]
-        )
-        return
+        # cerebro.optstrategy(
+        #     SuperScalper,
+        #     ema_length=[3, 4],
+        #     amt_open_trades=[100, 120],
+        #     profit_target=[10_000, 25_000]
+        #     optimizing=[True]
+        # )
         cerebro.optstrategy(
             SuperScalper,
             ema_length=range(2, 8, 2),
             amt_open_trades=range(50, 200, 20),
-            profit_target=range(1_000, 100_000, 10_000)
+            profit_target=range(1_000, 100_000, 10_000),
+            optimizing=[True]
         )
 
     def __init__(self):
         self.entries: List[Entry] = []
-        self.ema = bt.indicators.EMA(period=self.p.ema_length)
-
         self.trades: List[Trade] = []
 
-    def start(self):
-        """This function is called when the strategy is starting to process each time frame."""
-        pass
+        self.ema = bt.indicators.EMA(period=self.p.ema_length)
 
-    def exit(self):
+    def next(self):
+        """This function is called by cerebro each time it has a new data."""
+
+        global ENTRY_INDEX
+        ENTRY_INDEX += 1
+
+        # end of day -> Close all trades
+        if self.data.num2date(self.data.datetime[0]).time() >= time(15, 30, 0):
+            print("End of day, closing all trades")
+            return self.exit()
+
+        total_profit = sum(
+            entry.type * (entry.entry - self.data.close[0])
+            for entry in self.entries
+        )
+
+        # total Profit > goal -> Close all trades
+        if total_profit > self.p.profit_target:
+            print("Reached profit target, closing all trades")
+            return self.exit(True)
+
+        if not hasattr(self, 'entry_size'):
+            self.entry_size = self.broker.cash / self.data.close[0] / \
+                (self.p.amt_open_trades * self.p.size_security)
+
+        if len(self.entries) < self.p.amt_open_trades:
+            if self.ema[0] >= self.ema[-1]:
+                order = self.buy(
+                    tradeid=len(self.entries),
+                    size=self.entry_size,
+                    exectype=bt.Order.Market
+                )
+                self.entries.append(Entry(
+                    type=1,
+                    entry=self.data.close[0],
+                    index=ENTRY_INDEX,
+                    order=order
+                ))
+            else:
+                order = self.sell(
+                    tradeid=len(self.entries),
+                    size=self.entry_size,
+                    exectype=bt.Order.Market
+                )
+                self.entries.append(Entry(
+                    type=-1,
+                    entry=self.data.close[0],
+                    index=ENTRY_INDEX,
+                    order=order
+                ))
+        else:
+            best_idx = 0
+            best_value = -float('inf')
+
+            for i, entry in enumerate(self.entries):
+                position = -entry.type * (entry.entry - self.data.close[0])
+                if position > best_value:
+                    best_idx, best_value = i, position
+
+            self.close(tradeid=best_idx)
+            self.trades.append(
+                Trade(
+                    type=self.entries[best_idx].type,
+                    entry=self.entries[best_idx].entry,
+                    exit=self.data.close[0],
+                    entryIndex=self.entries[best_idx].index,
+                    exitIndex=ENTRY_INDEX
+                )
+            )
+
+            if self.ema[0] >= self.ema[-1]:
+                order = self.buy(
+                    tradeid=best_idx,
+                    size=self.entry_size,
+                    exectype=bt.Order.Market
+                )
+                self.entries[best_idx] = Entry(
+                    type=1,
+                    entry=self.data.close[0],
+                    index=ENTRY_INDEX,
+                    order=order
+                )
+            else:
+                order = self.sell(
+                    tradeid=best_idx,
+                    size=self.entry_size,
+                    exectype=bt.Order.Market
+                )
+                self.entries[best_idx] = Entry(
+                    type=-1,
+                    entry=self.data.close[0],
+                    index=ENTRY_INDEX,
+                    order=order
+                )
+
+    def exit(self, reachedProfit=False):
         for entry in self.entries:
             if entry.type == 1:
                 self.sell(
@@ -98,184 +198,77 @@ class SuperScalper(BaseStrategy):
                     type=entry.type,
                     entry=entry.entry,
                     exit=self.data.close[0],
-                    timeEntry=entry.time,
-                    timeExit=self.data.datetime[0]
+                    entryIndex=entry.index,
+                    exitIndex=ENTRY_INDEX,
+                    dayClose=True,
+                    reachedProfit=reachedProfit
                 )
             )
+
         self.entries = []
-
-    def next(self):
-        """This function is called by cerebro each time it has a new data."""
-
-        # end of day -> Close all trades
-        if self.data.num2date(self.data.datetime[0]).time() >= time(20, 30, 0):
-            self.log("End of day, closing all trades")
-            return self.exit()
-
-        total_profit = 0
-        for entry in self.entries:
-            if entry.type == 1:
-                total_profit += entry.entry - self.data.close[0]
-            else:
-                total_profit += self.data.close[0] - entry.entry
-
-        # total Profit > goal -> Close all trades
-        if total_profit > self.p.profit_target:
-            self.log("Reached profit target, closing all trades")
-            return self.exit()
-
-        if not hasattr(self, 'entry_size'):
-            self.entry_size = self.broker.cash / \
-                self.data.close[0] / self.p.amt_open_trades
-
-        if len(self.entries) < self.p.amt_open_trades:
-            if self.ema[0] >= self.ema[-1]:
-                order = self.buy(
-                    tradeid=len(self.entries),
-                    size=self.entry_size,
-                    exectype=bt.Order.Market
-                )
-                self.entries.append(Entry(
-                    type=1,
-                    entry=self.data.close[0],
-                    time=self.data.datetime[0],
-                    order=order
-                ))
-            else:
-                order = self.sell(
-                    tradeid=len(self.entries),
-                    size=self.entry_size,
-                    exectype=bt.Order.Market
-                )
-                self.entries.append(Entry(
-                    type=-1,
-                    entry=self.data.close[0],
-                    time=self.data.datetime[0],
-                    order=order
-                ))
-        else:
-            best_idx = 0
-            best_value = self.entries[0].entry - self.data.close[0]
-
-            for i, entry in enumerate(self.entries):
-                if entry.type == 1 and entry.entry - self.data.close[0] > best_value:
-                    best_idx = i
-                    best_value = entry.entry - self.data.close[0]
-                elif entry.type == -1 and self.data.close[0] - entry.entry > best_value:
-                    best_idx = i
-                    best_value = self.data.close[0] - entry.entry
-
-            self.close(tradeid=best_idx)
-            self.trades.append(
-                Trade(
-                    type=self.entries[best_idx].type,
-                    entry=self.entries[best_idx].entry,
-                    exit=self.data.close[0],
-                    timeEntry=self.entries[best_idx].time,
-                    timeExit=self.data.datetime[0]
-                )
-            )
-
-            if self.ema[0] >= self.ema[-1]:
-                order = self.buy(
-                    tradeid=best_idx,
-                    size=self.entry_size,
-                    exectype=bt.Order.Market
-                )
-                self.entries[best_idx] = Entry(
-                    type=1,
-                    entry=self.data.close[0],
-                    time=self.data.datetime[0],
-                    order=order
-                )
-            else:
-                order = self.sell(
-                    tradeid=best_idx,
-                    size=self.entry_size,
-                    exectype=bt.Order.Market
-                )
-                self.entries[best_idx] = Entry(
-                    type=-1,
-                    entry=self.data.close[0],
-                    time=self.data.datetime[0],
-                    order=order
-                )
 
     def stop(self):
         """This function is called when the strategy is finished with all the data."""
-        df = pd.DataFrame(self.trades)
-        df['timeEntry'] = pd.to_datetime(df['timeEntry'])
-        df['timeExit'] = pd.to_datetime(df['timeExit'])
-        df.to_csv(
-            f'SuperScalper-Trades-{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.csv'
-        )
-        plotTrades(self.trades)
-
-    def log(self, txt, dt=None):
-        ''' Logging function for this strategy'''
-        dt = dt or self.data.datetime[0]
-        if isinstance(dt, float):
-            dt = bt.num2date(dt)
-        print(f'{dt.isoformat()}: {txt}')
+        if not self.p.optimizing:
+            df = pd.DataFrame(self.trades)
+            df.to_csv(
+                f'SuperScalper-Trades-{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.csv'
+            )
+            plotTrades(self.trades)
 
     def notify_trade(self, trade):
         if not trade.size:
             print(f'Trade PNL: ${trade.pnlcomm:.2f}')
 
-    def notify_order(self, order):
-        if order.getstatusname() == 'Completed':
-            self.log(
-                f'Order - {order.getordername()} {order.ordtypename()} {order.getstatusname()} for {order.size} shares @ ${order.price}'
-            )
 
-
+# TODO for Future: Add this plotting to the main Cerebro Plotting
 def plotTrades(trades: List[Trade]) -> None:
     """Plots the trades of a strategy"""
-    # Trade.timeEntry as x with entry as y is the first point and should be connected with a line to Trade.timeExit as x with exit as y
-    # connect each trade with a line
 
-    for trade in trades[:30]:
-        print(trade)
-
-    # Plot the trades
     fig, ax = plt.subplots(figsize=(10, 5))
-    for i, trade in enumerate(trades):
-        if trade.type == 1:
-            ax.plot(
-                [trade.timeEntry, trade.timeExit],
-                [trade.entry, trade.exit],
-                label=str(i),
-                color='green',
-                linewidth=1
-            )
-        else:
-            ax.plot(
-                [trade.timeEntry, trade.timeExit],
-                [trade.entry, trade.exit],
-                label=str(i),
-                color='red',
-                linewidth=1
-            )
 
-    """ # Plot the entry and exit points
-    for trade in trades:
-        ax.scatter(
-            trade.timeEntry,
-            trade.entry,
-            color='green',
-            s=100
+    # Connect each trades starting point to it's ending point
+    for i, trade in enumerate(trades[::5]):
+        ax.plot(
+            [trade.entryIndex, trade.exitIndex],
+            [trade.entry, trade.exit],
+            label=str(i),
+            color='green' if trade.type == 1 else 'red',
+            linewidth=1
         )
-        ax.scatter(
-            trade.timeExit,
-            trade.exit,
-            color='red',
-            s=100
-        ) """
+
+    # Figure out all the last trades of a day
+    days: List[List[Trade]] = []
+    current_day: List[Trade] = []
+
+    for i, trade in enumerate(trades):
+        current_day.append(trade)
+        if trade.dayClose and (i == len(trades) - 1 or not trades[i + 1].dayClose):
+            days.append(current_day)
+            current_day = []
+
+    # add a marker at the close of the day with the profit as a label
+    for day in days:
+        day_profit = sum(
+            trade.type * (trade.entry - trade.exit)
+            for trade in day
+        )
+        ax.plot(
+            day[-1].exitIndex,
+            day[-1].exit,
+            'o',
+            color='orange' if day[-1].reachedProfit else 'black',
+            markersize=5
+        )
+        ax.text(
+            day[-1].exitIndex,
+            day[-1].exit,
+            f'${day_profit:.2f}',
+            color='black'
+        )
 
     ax.set_title('Trades')
     ax.set_xlabel('Date')
     ax.set_ylabel('Price')
-    # myFmt = mdates.DateFormatter('%d')
-    # ax.xaxis.set_major_formatter(myFmt)
     ax.grid(True)
     plt.show()

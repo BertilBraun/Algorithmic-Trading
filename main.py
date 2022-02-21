@@ -45,8 +45,7 @@ parser.add_argument(
     default=datetime.now().strftime('%Y-%m-%d'),
 )
 parser.add_argument(
-    '-sc',
-    '--startcash',
+    '-startcash',
     help='the amount of cash to start with default is $100,000',
     type=int,
     default=100_000
@@ -108,8 +107,8 @@ for ticker in tickers:
             fromdate=fromdate,
             todate=todate,
             historical=True,
-            sessionstart=time(14, 30, 00),
-            sessionend=time(22, 00, 00)
+            sessionstart=time(9, 00, 00),
+            sessionend=time(16, 30, 00)
         )
 
         d.addfilter(bt.filters.SessionFilter)
