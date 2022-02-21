@@ -1,5 +1,5 @@
 import argparse
-from datetime import datetime
+from datetime import datetime, time
 from typing import Dict
 
 import alpaca_backtrader_api as alpaca
@@ -107,8 +107,12 @@ for ticker in tickers:
             compression=minutes,
             fromdate=fromdate,
             todate=todate,
-            historical=True
+            historical=True,
+            sessionstart=time(14, 30, 00),
+            sessionend=time(22, 00, 00)
         )
+
+        d.addfilter(bt.filters.SessionFilter)
 
         cerebro.adddata(d)
 
