@@ -4,6 +4,7 @@ from typing import Dict
 import alpaca_backtrader_api as alpaca
 import backtrader as bt
 import pandas as pd
+from pytz import timezone
 
 from settings import ALPACA_KEY_ID, ALPACA_SECRET_KEY, parse_args
 from strategies.customStrategy import BaseStrategy
@@ -65,9 +66,7 @@ def setup_cerebro() -> bt.Cerebro:
 
     for ticker in tickers:
         for name, (minutes, timeframe) in strategy.timeframes.items():
-            print(
-                f'Adding ticker {ticker} using {timeframe} timeframe at {name}.'
-            )
+            print(f'Adding ticker {ticker} using timeframe at {name}.')
 
             d = DataFactory(
                 dataname=ticker,
@@ -76,9 +75,7 @@ def setup_cerebro() -> bt.Cerebro:
                 fromdate=fromdate,
                 todate=todate,
                 historical=True,
-                tz='US/Eastern',
-                sessionstart=time(9, 30, 00),
-                sessionend=time(16, 00, 00)
+                tz=timezone('US/Eastern')
             )
 
             if timeframe < bt.TimeFrame.Days:
@@ -103,15 +100,11 @@ def analyze_results(runs) -> None:
             ';'.join([f'{k}: {v}' for k, v in run.p.__dict__.items()])
         )
 
-        maxDrawDown = run.analyzers.drawdown.get_analysis().max
-        run_data.append(round(maxDrawDown['drawdown'], 5))
-        run_data.append(round(maxDrawDown['moneydown'], 5))
-
-        returns = run.analyzers.returns.get_analysis()
-        run_data.append(round(returns['rtot'], 5))
-        run_data.append(round(returns['rnorm'], 5))
-
         trades = run.analyzers.trades.get_analysis()
+
+        if trades['total']['total'] == 0:
+            return
+
         run_data.append(trades['total']['total'])
         run_data.append(trades['total']['open'])
         run_data.append(trades['total']['closed'])
@@ -128,9 +121,19 @@ def analyze_results(runs) -> None:
         run_data.append(trades['short']['total'])
         run_data.append(round(trades['short']['pnl']['total'], 5))
 
+        maxDrawDown = run.analyzers.drawdown.get_analysis().max
+        run_data.append(round(maxDrawDown['drawdown'], 5))
+        run_data.append(round(maxDrawDown['moneydown'], 5))
+
+        returns = run.analyzers.returns.get_analysis()
+        run_data.append(round(returns['rtot'], 5))
+        run_data.append(round(returns['rnorm'], 5))
+
         sqn = run.analyzers.SQN.get_analysis()
         run_data.append(sqn['sqn'])
-        if sqn.sqn < 1.6:
+        if sqn.sqn < 0:
+            run_data.append('Really Bad')
+        elif sqn.sqn < 1.6:
             run_data.append('Bad')
         elif sqn.sqn < 2.0:
             run_data.append('Below average')
@@ -185,6 +188,6 @@ def analyze_results(runs) -> None:
 cerebro = setup_cerebro()
 
 # if some weird Index error gets printed, check the ticker names again
-runs = cerebro.run(optreturn=not args.optimize, tz='US/Eastern')
+runs = cerebro.run(optreturn=not args.optimize)
 
 analyze_results(runs)
