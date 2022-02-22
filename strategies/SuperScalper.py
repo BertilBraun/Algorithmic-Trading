@@ -50,7 +50,7 @@ class SuperScalper(BaseStrategy):
     )
 
     timeframes = {
-        '1Min': 1,
+        '1Min': (1, bt.TimeFrame.Minutes),
     }
 
     @classmethod
@@ -71,7 +71,7 @@ class SuperScalper(BaseStrategy):
         cerebro.optstrategy(
             SuperScalper,
             ema_length=range(2, 6, 2),
-            amt_open_trades=range(50, 200, 50),
+            amt_open_trades=range(50, 200, 30),
             profit_target=range(1_000, 20_000, 5_000),
             optimizing=[True]
         )

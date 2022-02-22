@@ -12,9 +12,9 @@ class RSIStack(BaseStrategy):
     )
 
     timeframes = {
-        '15Min': 15,
-        '30Min': 30,
-        '1H': 60,
+        '15Min': (15, bt.TimeFrame.Minutes),
+        '30Min': (30, bt.TimeFrame.Minutes),
+        '1H': (60, bt.TimeFrame.Minutes),
     }
 
     @classmethod

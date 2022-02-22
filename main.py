@@ -8,11 +8,13 @@ import pandas as pd
 from settings import ALPACA_KEY_ID, ALPACA_SECRET_KEY, parse_args
 from strategies.customStrategy import BaseStrategy
 from strategies.RSIStack import RSIStack
+from strategies.Slingshot import Slingshot
 from strategies.SuperScalper import SuperScalper
 
 strategies: Dict[str, BaseStrategy] = {
     'RSIStack': RSIStack,
-    'SuperScalper': SuperScalper
+    'SuperScalper': SuperScalper,
+    'Slingshot': Slingshot
 }
 
 args = parse_args(strategies.keys())
@@ -62,23 +64,25 @@ def setup_cerebro() -> bt.Cerebro:
     DataFactory = store.getdata
 
     for ticker in tickers:
-        for timeframe, minutes in strategy.timeframes.items():
+        for name, (minutes, timeframe) in strategy.timeframes.items():
             print(
-                f'Adding ticker {ticker} using {timeframe} timeframe at {minutes} minutes.'
+                f'Adding ticker {ticker} using {timeframe} timeframe at {name}.'
             )
 
             d = DataFactory(
                 dataname=ticker,
-                timeframe=bt.TimeFrame.Minutes,
+                timeframe=timeframe,
                 compression=minutes,
                 fromdate=fromdate,
                 todate=todate,
                 historical=True,
-                sessionstart=time(9, 00, 00),
-                sessionend=time(16, 30, 00)
+                tz='US/Eastern',
+                sessionstart=time(9, 30, 00),
+                sessionend=time(16, 00, 00)
             )
 
-            d.addfilter(bt.filters.SessionFilter)
+            if timeframe < bt.TimeFrame.Days:
+                d.addfilter(bt.filters.SessionFilter)
 
             cerebro.adddata(d)
 
@@ -100,12 +104,12 @@ def analyze_results(runs) -> None:
         )
 
         maxDrawDown = run.analyzers.drawdown.get_analysis().max
-        run_data.append(maxDrawDown['drawdown'])
-        run_data.append(maxDrawDown['moneydown'])
+        run_data.append(round(maxDrawDown['drawdown'], 5))
+        run_data.append(round(maxDrawDown['moneydown'], 5))
 
         returns = run.analyzers.returns.get_analysis()
-        run_data.append(returns['rtot'])
-        run_data.append(returns['rnorm'])
+        run_data.append(round(returns['rtot'], 5))
+        run_data.append(round(returns['rnorm'], 5))
 
         trades = run.analyzers.trades.get_analysis()
         run_data.append(trades['total']['total'])
@@ -114,15 +118,15 @@ def analyze_results(runs) -> None:
         run_data.append(trades['streak']['won']['longest'])
         run_data.append(trades['streak']['lost']['longest'])
         run_data.append(trades['won']['total'])
-        run_data.append(trades['won']['pnl']['total'])
-        run_data.append(trades['won']['pnl']['average'])
+        run_data.append(round(trades['won']['pnl']['total'], 5))
+        run_data.append(round(trades['won']['pnl']['average'], 5))
         run_data.append(trades['lost']['total'])
-        run_data.append(trades['lost']['pnl']['total'])
-        run_data.append(trades['lost']['pnl']['average'])
+        run_data.append(round(trades['lost']['pnl']['total'], 5))
+        run_data.append(round(trades['lost']['pnl']['average'], 5))
         run_data.append(trades['long']['total'])
-        run_data.append(trades['long']['pnl']['total'])
+        run_data.append(round(trades['long']['pnl']['total'], 5))
         run_data.append(trades['short']['total'])
-        run_data.append(trades['short']['pnl']['total'])
+        run_data.append(round(trades['short']['pnl']['total'], 5))
 
         sqn = run.analyzers.SQN.get_analysis()
         run_data.append(sqn['sqn'])
@@ -142,12 +146,12 @@ def analyze_results(runs) -> None:
             run_data.append('Holy Grail?')
 
         period = run.analyzers.period.get_analysis()
-        run_data.append(period['average'])
-        run_data.append(period['stddev'])
+        run_data.append(round(period['average'], 5))
+        run_data.append(round(period['stddev'], 5))
         run_data.append(period['positive'])
         run_data.append(period['negative'])
-        run_data.append(period['best'])
-        run_data.append(period['worst'])
+        run_data.append(round(period['best'], 5))
+        run_data.append(round(period['worst'], 5))
 
         data.append(run_data)
 
@@ -159,7 +163,7 @@ def analyze_results(runs) -> None:
         ]
     )
     filename = f'{args.strategy}_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}_results.csv'
-    dataframe.to_csv(filename)
+    dataframe.to_csv(filename, sep=',', index=False)
     print(f'Results saved to {filename}')
     print(dataframe)
 
@@ -174,13 +178,13 @@ def analyze_results(runs) -> None:
             reverse=True
         ):
             profit = run.analyzers.returns.get_analysis()['rtot']
-            params = ';'.join([f'{k}: {v}' for k, v in run.p.__dict__.items()])
+            params = ','.join([f'{k}: {v}' for k, v in run.p.__dict__.items()])
             print(f'{profit:.2f} for Params: {params}')
 
 
 cerebro = setup_cerebro()
 
 # if some weird Index error gets printed, check the ticker names again
-runs = cerebro.run(optreturn=not args.optimize)
+runs = cerebro.run(optreturn=not args.optimize, tz='US/Eastern')
 
 analyze_results(runs)
