@@ -4,3 +4,4 @@ Pipfile
 Pipfile.lock
 .vscode/
 *.csv
+testing/

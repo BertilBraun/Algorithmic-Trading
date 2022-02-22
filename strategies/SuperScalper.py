@@ -4,7 +4,6 @@ from datetime import datetime, time
 from typing import List
 
 import backtrader as bt
-import matplotlib.dates as mdates
 import pandas as pd
 from matplotlib import pyplot as plt
 
@@ -71,9 +70,9 @@ class SuperScalper(BaseStrategy):
         # )
         cerebro.optstrategy(
             SuperScalper,
-            ema_length=range(2, 8, 2),
-            amt_open_trades=range(50, 200, 20),
-            profit_target=range(1_000, 100_000, 10_000),
+            ema_length=range(2, 6, 2),
+            amt_open_trades=range(50, 200, 50),
+            profit_target=range(1_000, 20_000, 5_000),
             optimizing=[True]
         )
 
@@ -91,7 +90,6 @@ class SuperScalper(BaseStrategy):
 
         # end of day -> Close all trades
         if self.data.num2date(self.data.datetime[0]).time() >= time(15, 30, 0):
-            print("End of day, closing all trades")
             return self.exit()
 
         total_profit = sum(
