@@ -49,10 +49,10 @@ class Slingshot(BaseStrategy):
 
     def next(self):
         """This function is called by cerebro each time it has a new data."""
-        if self.data.datetime.time() <= time(9, 31):
-            self.slingshot_ema[0] = bt.ind.EMA(
-                self.data.high, period=self.p.slingshot_ema_length
-            )
+        # if self.data.datetime.time() <= time(9, 31):
+        #     self.slingshot_ema[0] = bt.ind.EMA(
+        #         self.data.high, period=self.p.slingshot_ema_length
+        #     )
 
         all_previous_below = all(
             self.data.close[-i] < self.slingshot_ema[-i]
